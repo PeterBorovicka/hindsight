@@ -4,7 +4,7 @@ let locomoData = null;
 
 window.loadLocomoResults = async function() {
     try {
-        const response = await fetch('/api/locomo');
+        const response = await fetch('api/locomo');
         locomoData = await response.json();
         console.log('Loaded locomo data:', locomoData);
         renderLocomoResults();

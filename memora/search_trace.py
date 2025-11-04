@@ -28,7 +28,7 @@ class EntryPoint(BaseModel):
 
 class WeightComponents(BaseModel):
     """Breakdown of weight calculation components."""
-    activation: float = Field(description="Activation from spreading", ge=0.0, le=1.0)
+    activation: float = Field(description="Activation from spreading (can exceed 1.0 through accumulation)", ge=0.0)
     semantic_similarity: float = Field(description="Semantic similarity to query", ge=0.0, le=1.0)
     recency: float = Field(description="Recency weight", ge=0.0, le=1.0)
     frequency: float = Field(description="Normalized frequency weight", ge=0.0, le=1.0)

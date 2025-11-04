@@ -135,7 +135,7 @@ window.loadDataView = async function(factType) {
 
     try {
         // Build URL with agent filter and fact_type filter
-        let url = `/api/graph?agent_id=${encodeURIComponent(currentAgentId)}`;
+        let url = `api/graph?agent_id=${encodeURIComponent(currentAgentId)}`;
         if (factType !== 'all') {
             url += `&fact_type=${factType}`;
         }
@@ -361,7 +361,7 @@ async function loadGraphData() {
         }
 
         // Build URL with agent filter
-        let url = `/api/graph?agent_id=${encodeURIComponent(currentAgentId)}`;
+        let url = `api/graph?agent_id=${encodeURIComponent(currentAgentId)}`;
 
         const response = await fetch(url);
 
@@ -577,7 +577,7 @@ async function loadAgents() {
     if (agentsLoaded) return;
 
     try {
-        const response = await fetch('/api/agents');
+        const response = await fetch('api/agents');
         const data = await response.json();
 
         const select = document.getElementById('search-agent-id');
@@ -758,7 +758,7 @@ async function loadAgentsForPane(paneId) {
     }
 
     try {
-        const response = await fetch('/api/agents');
+        const response = await fetch('api/agents');
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -802,11 +802,11 @@ window.runSearchInPane = async function(paneId) {
 
     try {
         // Determine endpoint based on search type
-        let endpoint = '/api/search';
+        let endpoint = 'api/search';
         if (searchType === 'world') {
-            endpoint = '/api/world_search';
+            endpoint = 'api/world_search';
         } else if (searchType === 'agent') {
-            endpoint = '/api/agent_search';
+            endpoint = 'api/agent_search';
         }
 
         statusBar.innerHTML = '<span style="color: #ff9800;">🔄 Searching...</span>';
@@ -1488,8 +1488,8 @@ async function loadGlobalAgents() {
             return;
         }
 
-        console.log('Fetching /api/agents...'); // Debug
-        const response = await fetch('/api/agents');
+        console.log('Fetching api/agents...'); // Debug
+        const response = await fetch('api/agents');
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -1617,9 +1617,9 @@ window.runThink = async function() {
         resultDiv.style.display = 'none';
         loadingDiv.style.display = 'block';
 
-        console.log('Calling /api/think with', { query, agentId, thinkingBudget, topK }); // Debug log
+        console.log('Calling api/think with', { query, agentId, thinkingBudget, topK }); // Debug log
 
-        const response = await fetch('/api/think', {
+        const response = await fetch('api/think', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -1701,11 +1701,16 @@ window.runThink = async function() {
         if (data.new_opinions && data.new_opinions.length > 0) {
             newOpinionsListDiv.innerHTML = data.new_opinions.map((opinion, idx) => `
                 <div style="margin-bottom: 15px; padding: 15px; background: white; border-radius: 6px; border-left: 4px solid #4caf50; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                    <div style="display: flex; align-items: center; margin-bottom: 8px;">
-                        <span style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-right: 10px;">NEW</span>
-                        <span style="color: #666; font-size: 12px;">#${idx + 1}</span>
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                        <div style="display: flex; align-items: center;">
+                            <span style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-right: 10px;">NEW</span>
+                            <span style="color: #666; font-size: 12px;">#${idx + 1}</span>
+                        </div>
+                        <span style="background: #e3f2fd; color: #1976d2; padding: 3px 8px; border-radius: 10px; font-size: 11px; font-weight: 600;">
+                            ${(opinion.confidence * 100).toFixed(0)}% confidence
+                        </span>
                     </div>
-                    <div style="font-size: 14px; color: #333; line-height: 1.5;">${opinion}</div>
+                    <div style="font-size: 14px; color: #333; line-height: 1.5;">${opinion.text}</div>
                 </div>
             `).join('');
             newOpinionsDiv.style.display = 'block';

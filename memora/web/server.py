@@ -91,11 +91,10 @@ The system uses:
     # Store memory instance on app for route handlers to access
     app.state.memory = memory
 
+    # Register all routes
+    _register_routes(app)
+
     return app
-
-
-# Create default app instance with default embeddings
-app = create_app()
 
 
 class SearchRequest(BaseModel):
@@ -226,11 +225,17 @@ class ThinkRequest(BaseModel):
         }
 
 
+class OpinionItem(BaseModel):
+    """Model for an opinion with confidence score."""
+    text: str
+    confidence: float
+
+
 class ThinkResponse(BaseModel):
     """Response model for think endpoint."""
     text: str
     based_on: Dict[str, List[Dict[str, Any]]]  # {"world": [...], "agent": [...], "opinion": [...]}
-    new_opinions: List[str] = []  # List of newly formed opinions
+    new_opinions: List[OpinionItem] = []  # List of newly formed opinions with confidence
 
     class Config:
         json_schema_extra = {
@@ -241,7 +246,9 @@ class ThinkResponse(BaseModel):
                     "agent": [{"text": "I discussed AI applications last week", "score": 0.85}],
                     "opinion": [{"text": "I believe AI should be used ethically", "score": 0.8}]
                 },
-                "new_opinions": ["AI has great potential when used responsibly"]
+                "new_opinions": [
+                    {"text": "AI has great potential when used responsibly", "confidence": 0.95}
+                ]
             }
         }
 
@@ -262,6 +269,8 @@ class GraphDataResponse(BaseModel):
     """Response model for graph data endpoint."""
     nodes: List[Dict[str, Any]]
     edges: List[Dict[str, Any]]
+    table_rows: List[Dict[str, Any]]
+    total_units: int
 
     class Config:
         json_schema_extra = {
@@ -272,319 +281,330 @@ class GraphDataResponse(BaseModel):
                 ],
                 "edges": [
                     {"from": "1", "to": "2", "type": "semantic", "weight": 0.8}
-                ]
+                ],
+                "table_rows": [
+                    {"id": "abc12345...", "text": "Alice works at Google", "context": "Work info", "date": "2024-01-15 10:30", "entities": "Alice (PERSON), Google (ORGANIZATION)"}
+                ],
+                "total_units": 2
             }
         }
 
 
-@app.get("/", include_in_schema=False)
-async def index():
-    """Serve the visualization page."""
-    return FileResponse(str(Path(__file__).parent / "templates" / "index.html"))
+def _register_routes(app: FastAPI):
+    """Register all API routes on the given app instance."""
+
+    @app.get("/", include_in_schema=False)
+    async def index():
+        """Serve the visualization page."""
+        return FileResponse(str(Path(__file__).parent / "templates" / "index.html"))
 
 
-@app.get(
-    "/api/graph",
-    response_model=GraphDataResponse,
-    tags=["Visualization"],
-    summary="Get memory graph data",
-    description="Retrieve graph data for visualization, optionally filtered by agent_id and fact_type (world/agent/opinion)"
-)
-async def api_graph(
-    agent_id: Optional[str] = None,
-    fact_type: Optional[str] = None
-):
-    """Get graph data from database, optionally filtered by agent_id and fact_type."""
-    try:
-        data = await app.state.memory.get_graph_data(agent_id, fact_type)
-        return data
-    except Exception as e:
-        import traceback
-        error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        print(f"Error in /api/graph: {error_detail}")
-        raise HTTPException(status_code=500, detail=str(e))
+    @app.get(
+        "/api/graph",
+        response_model=GraphDataResponse,
+        tags=["Visualization"],
+        summary="Get memory graph data",
+        description="Retrieve graph data for visualization, optionally filtered by agent_id and fact_type (world/agent/opinion)"
+    )
+    async def api_graph(
+        agent_id: Optional[str] = None,
+        fact_type: Optional[str] = None
+    ):
+        """Get graph data from database, optionally filtered by agent_id and fact_type."""
+        try:
+            data = await app.state.memory.get_graph_data(agent_id, fact_type)
+            return data
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            print(f"Error in /api/graph: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post(
-    "/api/search",
-    response_model=SearchResponse,
-    tags=["Search"],
-    summary="Search all memory types",
-    description="Search across all memory types (world, agent, opinion) using semantic similarity and spreading activation"
-)
-async def api_search(request: SearchRequest):
-    """Run a search and return results with trace."""
-    try:
-        # Run search with tracing
-        results, trace = await app.state.memory.search_async(
-            agent_id=request.agent_id,
-            query=request.query,
-            thinking_budget=request.thinking_budget,
-            top_k=request.top_k,
-            enable_trace=request.trace,
-            mmr_lambda=request.mmr_lambda
-        )
-
-        # Convert trace to dict
-        trace_dict = trace.to_dict() if trace else None
-
-        return SearchResponse(
-            results=results,
-            trace=trace_dict
-        )
-    except Exception as e:
-        import traceback
-        error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        print(f"Error in /api/search: {error_detail}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post(
-    "/api/world_search",
-    response_model=SearchResponse,
-    tags=["Search"],
-    summary="Search world facts",
-    description="Search only world facts - general knowledge about people, places, events, and things that happen"
-)
-async def api_world_search(request: SearchRequest):
-    """Search only world facts (general knowledge about the world)."""
-    try:
-        # Run search with fact_type filter for 'world'
-        results, trace = await app.state.memory.search_async(
-            agent_id=request.agent_id,
-            query=request.query,
-            thinking_budget=request.thinking_budget,
-            top_k=request.top_k,
-            enable_trace=request.trace,
-            mmr_lambda=request.mmr_lambda,
-            fact_type='world'
-        )
-
-        # Convert trace to dict
-        trace_dict = trace.to_dict() if trace else None
-
-        return SearchResponse(
-            results=results,
-            trace=trace_dict
-        )
-    except Exception as e:
-        import traceback
-        error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        print(f"Error in /api/world_search: {error_detail}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post(
-    "/api/agent_search",
-    response_model=SearchResponse,
-    tags=["Search"],
-    summary="Search agent action facts",
-    description="Search only agent facts - memories about what the AI agent did, actions taken, and tasks performed"
-)
-async def api_agent_search(request: SearchRequest):
-    """Search only agent facts (facts about what the agent did)."""
-    try:
-        # Run search with fact_type filter for 'agent'
-        results, trace = await app.state.memory.search_async(
-            agent_id=request.agent_id,
-            query=request.query,
-            thinking_budget=request.thinking_budget,
-            top_k=request.top_k,
-            enable_trace=request.trace,
-            mmr_lambda=request.mmr_lambda,
-            fact_type='agent'
-        )
-
-        # Convert trace to dict
-        trace_dict = trace.to_dict() if trace else None
-
-        return SearchResponse(
-            results=results,
-            trace=trace_dict
-        )
-    except Exception as e:
-        import traceback
-        error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        print(f"Error in /api/agent_search: {error_detail}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post(
-    "/api/opinion_search",
-    response_model=SearchResponse,
-    tags=["Search"],
-    summary="Search agent opinions",
-    description="Search only opinion facts - the agent's formed beliefs, perspectives, and viewpoints"
-)
-async def api_opinion_search(request: SearchRequest):
-    """Search only opinion facts (agent's formed opinions and perspectives)."""
-    try:
-        # Run search with fact_type filter for 'opinion'
-        results, trace = await app.state.memory.search_async(
-            agent_id=request.agent_id,
-            query=request.query,
-            thinking_budget=request.thinking_budget,
-            top_k=request.top_k,
-            enable_trace=request.trace,
-            mmr_lambda=request.mmr_lambda,
-            fact_type='opinion'
-        )
-
-        # Convert trace to dict
-        trace_dict = trace.to_dict() if trace else None
-
-        return SearchResponse(
-            results=results,
-            trace=trace_dict
-        )
-    except Exception as e:
-        import traceback
-        error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        print(f"Error in /api/opinion_search: {error_detail}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post(
-    "/api/think",
-    response_model=ThinkResponse,
-    tags=["Reasoning"],
-    summary="Think and generate answer",
-    description="""
-Think and formulate an answer using agent identity, world facts, and opinions.
-
-This endpoint:
-1. Retrieves agent facts (agent's identity)
-2. Retrieves world facts relevant to the query
-3. Retrieves existing opinions (agent's perspectives)
-4. Uses LLM to formulate a contextual answer
-5. Extracts and stores any new opinions formed
-6. Returns plain text answer, the facts used, and new opinions
-    """
-)
-async def api_think(request: ThinkRequest):
-    try:
-        # Use the memory system's think_async method
-        result = await app.state.memory.think_async(
-            agent_id=request.agent_id,
-            query=request.query,
-            thinking_budget=request.thinking_budget,
-            top_k=request.top_k
-        )
-
-        return ThinkResponse(
-            text=result["text"],
-            based_on=result["based_on"],
-            new_opinions=result.get("new_opinions", [])
-        )
-
-    except Exception as e:
-        import traceback
-        error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        print(f"Error in /api/think: {error_detail}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get(
-    "/api/agents",
-    response_model=AgentsResponse,
-    tags=["Management"],
-    summary="List all agents",
-    description="Get a list of all agent IDs that have stored memories in the system"
-)
-async def api_agents():
-    """Get list of available agents from database."""
-    try:
-        agent_list = await app.state.memory.list_agents()
-        return AgentsResponse(agents=agent_list)
-    except Exception as e:
-        import traceback
-        error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        print(f"Error in /api/agents: {error_detail}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post(
-    "/api/memories/batch",
-    response_model=BatchPutResponse,
-    tags=["Memory Storage"],
-    summary="Store multiple memories",
-    description="""
-Store multiple memory items in batch with automatic fact extraction.
-
-Features:
-- Efficient batch processing
-- Automatic fact extraction from natural language
-- Entity recognition and linking
-- Document tracking with optional upsert
-- Temporal and semantic linking
-
-The system automatically:
-1. Extracts semantic facts from the content
-2. Generates embeddings
-3. Deduplicates similar facts
-4. Creates temporal, semantic, and entity links
-5. Tracks document metadata
-    """
-)
-async def api_batch_put(request: BatchPutRequest):
-    try:
-        # Validate agent_id - prevent writing to reserved agents
-        RESERVED_AGENT_IDS = {"locomo"}
-        if request.agent_id in RESERVED_AGENT_IDS:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Cannot write to reserved agent_id '{request.agent_id}'. Reserved agents: {', '.join(RESERVED_AGENT_IDS)}"
+    @app.post(
+        "/api/search",
+        response_model=SearchResponse,
+        tags=["Search"],
+        summary="Search all memory types",
+        description="Search across all memory types (world, agent, opinion) using semantic similarity and spreading activation"
+    )
+    async def api_search(request: SearchRequest):
+        """Run a search and return results with trace."""
+        try:
+            # Run search with tracing
+            results, trace = await app.state.memory.search_async(
+                agent_id=request.agent_id,
+                query=request.query,
+                thinking_budget=request.thinking_budget,
+                top_k=request.top_k,
+                enable_trace=request.trace,
+                mmr_lambda=request.mmr_lambda
             )
 
-        # Prepare contents for put_batch_async
-        contents = []
-        for item in request.items:
-            content_dict = {"content": item.content}
-            if item.event_date:
-                content_dict["event_date"] = item.event_date
-            if item.context:
-                content_dict["context"] = item.context
-            contents.append(content_dict)
+            # Convert trace to dict
+            trace_dict = trace.to_dict() if trace else None
 
-        # Call put_batch_async
-        result = await app.state.memory.put_batch_async(
-            agent_id=request.agent_id,
-            contents=contents,
-            document_id=request.document_id,
-            document_metadata=request.document_metadata,
-            upsert=request.upsert
-        )
-
-        return BatchPutResponse(
-            success=True,
-            message=f"Successfully stored {len(contents)} memory items",
-            agent_id=request.agent_id,
-            document_id=request.document_id,
-            items_count=len(contents)
-        )
-    except Exception as e:
-        import traceback
-        error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        print(f"Error in /api/memories/batch: {error_detail}")
-        raise HTTPException(status_code=500, detail=str(e))
+            return SearchResponse(
+                results=results,
+                trace=trace_dict
+            )
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            print(f"Error in /api/search: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/locomo")
-async def api_locomo():
-    """Get Locomo benchmark results."""
-    import json
-    try:
-        results_path = Path(__file__).parent.parent / "benchmarks" / "locomo" / "benchmark_results.json"
-        if not results_path.exists():
+    @app.post(
+        "/api/world_search",
+        response_model=SearchResponse,
+        tags=["Search"],
+        summary="Search world facts",
+        description="Search only world facts - general knowledge about people, places, events, and things that happen"
+    )
+    async def api_world_search(request: SearchRequest):
+        """Search only world facts (general knowledge about the world)."""
+        try:
+            # Run search with fact_type filter for 'world'
+            results, trace = await app.state.memory.search_async(
+                agent_id=request.agent_id,
+                query=request.query,
+                thinking_budget=request.thinking_budget,
+                top_k=request.top_k,
+                enable_trace=request.trace,
+                mmr_lambda=request.mmr_lambda,
+                fact_type='world'
+            )
+
+            # Convert trace to dict
+            trace_dict = trace.to_dict() if trace else None
+
+            return SearchResponse(
+                results=results,
+                trace=trace_dict
+            )
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            print(f"Error in /api/world_search: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+    @app.post(
+        "/api/agent_search",
+        response_model=SearchResponse,
+        tags=["Search"],
+        summary="Search agent action facts",
+        description="Search only agent facts - memories about what the AI agent did, actions taken, and tasks performed"
+    )
+    async def api_agent_search(request: SearchRequest):
+        """Search only agent facts (facts about what the agent did)."""
+        try:
+            # Run search with fact_type filter for 'agent'
+            results, trace = await app.state.memory.search_async(
+                agent_id=request.agent_id,
+                query=request.query,
+                thinking_budget=request.thinking_budget,
+                top_k=request.top_k,
+                enable_trace=request.trace,
+                mmr_lambda=request.mmr_lambda,
+                fact_type='agent'
+            )
+
+            # Convert trace to dict
+            trace_dict = trace.to_dict() if trace else None
+
+            return SearchResponse(
+                results=results,
+                trace=trace_dict
+            )
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            print(f"Error in /api/agent_search: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+    @app.post(
+        "/api/opinion_search",
+        response_model=SearchResponse,
+        tags=["Search"],
+        summary="Search agent opinions",
+        description="Search only opinion facts - the agent's formed beliefs, perspectives, and viewpoints"
+    )
+    async def api_opinion_search(request: SearchRequest):
+        """Search only opinion facts (agent's formed opinions and perspectives)."""
+        try:
+            # Run search with fact_type filter for 'opinion'
+            results, trace = await app.state.memory.search_async(
+                agent_id=request.agent_id,
+                query=request.query,
+                thinking_budget=request.thinking_budget,
+                top_k=request.top_k,
+                enable_trace=request.trace,
+                mmr_lambda=request.mmr_lambda,
+                fact_type='opinion'
+            )
+
+            # Convert trace to dict
+            trace_dict = trace.to_dict() if trace else None
+
+            return SearchResponse(
+                results=results,
+                trace=trace_dict
+            )
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            print(f"Error in /api/opinion_search: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+    @app.post(
+        "/api/think",
+        response_model=ThinkResponse,
+        tags=["Reasoning"],
+        summary="Think and generate answer",
+        description="""
+    Think and formulate an answer using agent identity, world facts, and opinions.
+
+    This endpoint:
+    1. Retrieves agent facts (agent's identity)
+    2. Retrieves world facts relevant to the query
+    3. Retrieves existing opinions (agent's perspectives)
+    4. Uses LLM to formulate a contextual answer
+    5. Extracts and stores any new opinions formed
+    6. Returns plain text answer, the facts used, and new opinions
+        """
+    )
+    async def api_think(request: ThinkRequest):
+        try:
+            # Use the memory system's think_async method
+            result = await app.state.memory.think_async(
+                agent_id=request.agent_id,
+                query=request.query,
+                thinking_budget=request.thinking_budget,
+                top_k=request.top_k
+            )
+
+            return ThinkResponse(
+                text=result["text"],
+                based_on=result["based_on"],
+                new_opinions=result.get("new_opinions", [])
+            )
+
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            print(f"Error in /api/think: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+    @app.get(
+        "/api/agents",
+        response_model=AgentsResponse,
+        tags=["Management"],
+        summary="List all agents",
+        description="Get a list of all agent IDs that have stored memories in the system"
+    )
+    async def api_agents():
+        """Get list of available agents from database."""
+        try:
+            agent_list = await app.state.memory.list_agents()
+            return AgentsResponse(agents=agent_list)
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            print(f"Error in /api/agents: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+    @app.post(
+        "/api/memories/batch",
+        response_model=BatchPutResponse,
+        tags=["Memory Storage"],
+        summary="Store multiple memories",
+        description="""
+    Store multiple memory items in batch with automatic fact extraction.
+
+    Features:
+    - Efficient batch processing
+    - Automatic fact extraction from natural language
+    - Entity recognition and linking
+    - Document tracking with optional upsert
+    - Temporal and semantic linking
+
+    The system automatically:
+    1. Extracts semantic facts from the content
+    2. Generates embeddings
+    3. Deduplicates similar facts
+    4. Creates temporal, semantic, and entity links
+    5. Tracks document metadata
+        """
+    )
+    async def api_batch_put(request: BatchPutRequest):
+        try:
+            # Validate agent_id - prevent writing to reserved agents
+            RESERVED_AGENT_IDS = {"locomo"}
+            if request.agent_id in RESERVED_AGENT_IDS:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Cannot write to reserved agent_id '{request.agent_id}'. Reserved agents: {', '.join(RESERVED_AGENT_IDS)}"
+                )
+
+            # Prepare contents for put_batch_async
+            contents = []
+            for item in request.items:
+                content_dict = {"content": item.content}
+                if item.event_date:
+                    content_dict["event_date"] = item.event_date
+                if item.context:
+                    content_dict["context"] = item.context
+                contents.append(content_dict)
+
+            # Call put_batch_async
+            result = await app.state.memory.put_batch_async(
+                agent_id=request.agent_id,
+                contents=contents,
+                document_id=request.document_id,
+                document_metadata=request.document_metadata,
+                upsert=request.upsert
+            )
+
+            return BatchPutResponse(
+                success=True,
+                message=f"Successfully stored {len(contents)} memory items",
+                agent_id=request.agent_id,
+                document_id=request.document_id,
+                items_count=len(contents)
+            )
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            print(f"Error in /api/memories/batch: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+    @app.get("/api/locomo")
+    async def api_locomo():
+        """Get Locomo benchmark results."""
+        import json
+        try:
+            results_path = Path(__file__).parent.parent / "benchmarks" / "locomo" / "benchmark_results.json"
+            if not results_path.exists():
+                raise HTTPException(status_code=404, detail="Benchmark results not found")
+
+            with open(results_path, 'r') as f:
+                data = json.load(f)
+            return data
+        except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Benchmark results not found")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
-        with open(results_path, 'r') as f:
-            data = json.load(f)
-        return data
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Benchmark results not found")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+# Create default app instance
+app = create_app()
 
 
 if __name__ == "__main__":
